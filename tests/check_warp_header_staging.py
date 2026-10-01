@@ -46,7 +46,7 @@ def check(source):
 
         for fixed in (False, True):
             if fixed:
-                run('patch', '--batch', '--fuzz=0', '-p1', '-i', str(repo / 'patches/mtk-warp-stage-headers.patch'), cwd=recipe_tree)
+                run('patch', '--batch', '--forward', '--fuzz=0', '-p1', '-i', str(repo / 'patches/mtk-warp-stage-headers.patch'), cwd=recipe_tree)
             work = root / ('fixed' if fixed else 'legacy')
             work.mkdir()
             build = work / 'warp'
