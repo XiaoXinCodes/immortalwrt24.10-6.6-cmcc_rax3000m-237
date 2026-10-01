@@ -143,6 +143,8 @@ jobs:
       run: cd openwrt && ./scripts/feeds install -a
 
     - name: Load custom configuration
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: |
         [ -e files ] && cp -a files openwrt/files
         [ -e $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
@@ -180,7 +182,7 @@ jobs:
         trap 'kill "$monitor_pid" 2>/dev/null || true' EXIT
         set -o pipefail
         # Avoid repeated full builds and massive verbose runner logs on ENOSPC.
-        make -j4 2>&1 | tee /workdir/compile.log
+        make -j4 BUILD_LOG=1 2>&1 | tee /workdir/compile.log
         echo "status=success" >> "$GITHUB_OUTPUT"
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> "$GITHUB_ENV"
@@ -214,6 +216,7 @@ jobs:
           /workdir/disk-monitor.log
           /workdir/disk-usage.log
           /workdir/openwrt/.config
+          /workdir/openwrt/proxy-package-versions.json
           /workdir/openwrt/logs
 
     - name: Clean up build artifacts
@@ -242,6 +245,7 @@ jobs:
         rm -rf *.manifest
         rm -rf *.json
         rm -rf *bl2.bin
+        cp "$GITHUB_WORKSPACE/openwrt/proxy-package-versions.json" .
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
         df -hT

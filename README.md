@@ -30,7 +30,7 @@
 | iPerf3 | 内网测速 | 官方 feed |
 | UPnP | 端口自动映射 | 官方 feed |
 
-> 构建时会把 Go 工具链升级到 1.25、sing-box 升级到 1.14.x，以满足 HomeProxy 的版本要求（见 `diy-part2.sh`）。
+> 每次构建查询 sing-box 官方最新稳定版，读取该版本的 `go.mod` 和 `toolchain` 要求，自动选择满足要求的 Go 工具链配方（见 `diy-part2.sh`）。
 
 ## 下载与刷机
 
@@ -77,7 +77,9 @@ make menuconfig   # 可视化调整
 
 默认启用 `CONFIG_AUTOREMOVE=y`，由 OpenWrt 在包构建完成后清理中间文件，降低编译期间占用；后续增量重编译会更慢。内核调试信息仍保留。编译期间每 3 分钟记录空间和 inode 使用量，失败时上传 `build-failure-diagnostics`，保留 7 天。
 
-`diy-part2.sh` 使用原生 Git 获取固定版本的 sing-box 1.14.0 配方，保留上游下载哈希，并处理该配方的 tiny 虚拟包声明与当前构建系统的兼容问题。未选中的 PassWall 不安装进本次构建的包目录；若显式选中它，则保留并交由严格配置检查报告问题。
+`diy-part2.sh` 每次查询 sing-box 官方最新稳定 release，获取 OpenWrt master 的打包配方，并根据官方 release 更新版本和源码 SHA-256；缓存及后续下载仍由 OpenWrt 校验哈希。读取发布源码的 Go 要求后，自动从 sbwml 的 Go 分支选择满足最低版本的配方，包含补丁版本比较。发现失败时直接报错，不回退旧版或关闭校验。
+
+当前构建系统的 tiny 虚拟包声明兼容处理仍保留。未选中的 PassWall 不安装进本次构建的包目录；若显式选中它，则保留并交由严格配置检查报告问题。解析后的 sing-box/Go 版本、源码哈希和配方提交记录在 `proxy-package-versions.json`，随固件或失败诊断上传。`Inspect build logs` 工作流可以按 run ID 读取构建日志，生成可直接查看的错误摘要。
 
 ## 仓库结构
 

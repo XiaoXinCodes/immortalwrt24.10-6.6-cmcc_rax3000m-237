@@ -26,6 +26,7 @@ jobs:
           import os
           import re
           import subprocess
+          import time
 
           run_id = os.environ['RUN_ID']
           if not run_id.isdigit():
@@ -34,14 +35,17 @@ jobs:
           jobs = json.loads(subprocess.check_output(['gh', 'api', prefix + 'runs/' + run_id + '/jobs']))['jobs']
           pattern = re.compile(r'ERROR:|fatal error:|fatal:|No space left on device|make(?:\[\d+\])?: \*\*\*|go: .*requires go|undefined reference|Killed signal', re.I)
           for job in jobs:
-              result = subprocess.run(['gh', 'api', prefix + 'jobs/' + str(job['id']) + '/logs'], capture_output=True, text=True)
+              endpoint = prefix + 'jobs/' + str(job['id']) + '/logs?nocache=' + str(int(time.time()))
+              result = subprocess.run(['gh', 'api', endpoint], capture_output=True, text=True)
               if result.returncode:
-                  print('::warning::Logs unavailable for job ' + str(job['id']) + '; retry once the job has uploaded logs.')
+                  status = re.search(r'HTTP \d+', result.stderr)
+                  reason = status.group(0) if status else ('Forbidden' if 'Forbidden' in result.stderr else 'download failed')
+                  print('::warning::Logs unavailable for job ' + str(job['id']) + ': ' + reason + '; retry once the job has uploaded logs.')
                   continue
               lines = result.stdout.splitlines()
               matches = [i for i, line in enumerate(lines) if pattern.search(line)]
               print('Job ' + str(job['id']) + ': ' + job['status'] + ', matched errors: ' + str(len(matches)))
-              for i in matches[-8:]:
+              for i in sorted(set(matches[:4] + matches[-4:])):
                   context = '\n'.join(lines[max(0, i-4):i+4])[-6000:]
                   escaped = context.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
                   print('::warning title=Build error context::' + escaped)
