@@ -65,13 +65,19 @@ cp /path/to/.config .config
 bash /path/to/diy-part1.sh
 ./scripts/feeds update -a && ./scripts/feeds install -a
 bash /path/to/diy-part2.sh
-make defconfig
+make defconfig RECURSIVE_DEP_IS_ERROR=1
 make menuconfig   # 可视化调整
 ```
 
 ### 构建环境说明
 
-GitHub 免费 runner 根盘较小，工作流开头使用 [`easimon/maximize-build-space`](https://github.com/easimon/maximize-build-space) 把构建目录搬到大容量磁盘，解决编译中途磁盘占满的问题。
+工作流先用 [`jlumbroso/free-disk-space`](https://github.com/jlumbroso/free-disk-space) 清理无关预装软件，再安装依赖，最后使用 [`easimon/maximize-build-space`](https://github.com/easimon/maximize-build-space) 将构建盘明确挂载到 `/workdir`。源码、构建目录、下载和临时缓存均放在该盘，避免扩容后仍在根分区编译。分配后给根分区预留 4 GiB；这个数值不代表构建盘容量。
+
+构建前检查实际挂载、可用容量和 inode，默认要求至少 50 GiB 可用空间（工作流变量 `MIN_BUILD_FREE_GIB`）。这是初始预算，并非已测得的最低需求；若 runner 容量不足，应根据完整构建峰值调整预算或使用更大磁盘的 runner。
+
+默认启用 `CONFIG_AUTOREMOVE=y`，由 OpenWrt 在包构建完成后清理中间文件，降低编译期间占用；后续增量重编译会更慢。内核调试信息仍保留。编译期间每 3 分钟记录空间和 inode 使用量，失败时上传 `build-failure-diagnostics`，保留 7 天。
+
+`diy-part2.sh` 使用原生 Git 获取固定版本的 sing-box 1.14.0 配方，保留上游下载哈希，并处理该配方的 tiny 虚拟包声明与当前构建系统的兼容问题。未选中的 PassWall 不安装进本次构建的包目录；若显式选中它，则保留并交由严格配置检查报告问题。
 
 ## 仓库结构
 

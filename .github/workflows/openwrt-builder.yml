@@ -25,6 +25,7 @@ env:
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
+  MIN_BUILD_FREE_GIB: 50
 
 jobs:
   build:
@@ -37,26 +38,24 @@ jobs:
     - name: Checkout
       uses: actions/checkout@main
 
-    - name: Maximize build space
-      # GitHub-hosted runners only have ~14GB on the root disk, which is not
-      # enough for a full ImmortalWrt build. Remount onto the larger /mnt disk.
-      # https://github.com/easimon/maximize-build-space
-      uses: easimon/maximize-build-space@master
+    - name: Reclaim unused runner software
+      uses: jlumbroso/free-disk-space@36e9a5af4eddb91fc11aec4c6f6f79b3cc0cb523
       with:
-        root-reserve-mb: 2048
-        swap-size-mb: 1024
-        remove-dotnet: 'true'
-        remove-android: 'true'
-        remove-haskell: 'true'
-        remove-codeql: 'true'
-        remove-docker-images: 'true'
+        android: 'true'
+        dotnet: 'true'
+        haskell: 'true'
+        large-packages: 'true'
+        docker-images: 'true'
+        preinstalled-runtimes: 'false'
+        swap-storage: 'false'
 
     - name: Initialization environment
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        # Disk cleanup (dotnet/android/haskell/codeql/docker) is already handled
-        # by the "Maximize build space" step above.
+        # Install dependencies before reserving root disk space for the build volume.
+        # Initial cleanup has already removed unrelated runner software.
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
         sudo -E apt-get -qq update
         sudo -E apt-get -qq install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
         bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib \
@@ -72,6 +71,57 @@ jobs:
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
 
+    - name: Plan disk reserves
+      id: disk
+      run: |
+        root_reserve_mb=4096
+        temp_reserve_mb=1024
+        # Some runner images put /mnt on the root filesystem. Allow another
+        # 1 GiB for its loop image so the two allocations still leave 4 GiB.
+        if [ "$(stat -c '%d' /)" = "$(stat -c '%d' /mnt)" ]; then
+          root_reserve_mb=5120
+          temp_reserve_mb=4096
+        fi
+        echo "root_reserve_mb=$root_reserve_mb" >> "$GITHUB_OUTPUT"
+        echo "temp_reserve_mb=$temp_reserve_mb" >> "$GITHUB_OUTPUT"
+        df -hT / /mnt
+
+    - name: Allocate the actual build volume
+      uses: easimon/maximize-build-space@c28619d8999a147d5e09c1199f84ff6af6ad5794
+      with:
+        build-mount-path: /workdir
+        root-reserve-mb: ${{ steps.disk.outputs.root_reserve_mb }}
+        temp-reserve-mb: ${{ steps.disk.outputs.temp_reserve_mb }}
+        swap-size-mb: 1024
+        overprovision-lvm: 'false'
+        remove-dotnet: 'false'
+        remove-android: 'false'
+        remove-haskell: 'false'
+        remove-codeql: 'false'
+        remove-docker-images: 'false'
+
+    - name: Verify the disk layout before downloading source
+      run: |
+        mountpoint -q /workdir
+        root_device=$(stat -c '%d' /)
+        build_device=$(stat -c '%d' /workdir)
+        if [ "$root_device" = "$build_device" ]; then
+          echo "::error::/workdir must be on the allocated build filesystem"
+          exit 1
+        fi
+        df -hT / /workdir
+        df -i / /workdir
+        available_bytes=$(df -B1 --output=avail /workdir | tail -n1 | tr -d ' ')
+        minimum_bytes=$((MIN_BUILD_FREE_GIB * 1024 * 1024 * 1024))
+        if [ "$available_bytes" -lt "$minimum_bytes" ]; then
+          echo "::error::Build disk has less than ${MIN_BUILD_FREE_GIB} GiB free; use a larger runner or revise the measured build budget"
+          exit 1
+        fi
+        mkdir -p /workdir/tmp /workdir/.cache
+        echo 'TMPDIR=/workdir/tmp' >> "$GITHUB_ENV"
+        echo 'XDG_CACHE_HOME=/workdir/.cache' >> "$GITHUB_ENV"
+        df -hT / /workdir > /workdir/disk-layout.log
+
     - name: Clone source code
       working-directory: /workdir
       run: |
@@ -81,7 +131,7 @@ jobs:
 
     - name: Load custom feeds
       run: |
-        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+        [ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default
         chmod +x $DIY_P1_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P1_SH
@@ -94,36 +144,77 @@ jobs:
 
     - name: Load custom configuration
       run: |
-        [ -e files ] && mv files openwrt/files
-        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+        [ -e files ] && cp -a files openwrt/files
+        [ -e $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
 
-    - name: Download package
+    - name: Validate configuration and download packages
       id: package
       run: |
         cd openwrt
-        make defconfig
-        make download -j8
-        find dl -size -1024c -exec ls -l {} \;
-        find dl -size -1024c -exec rm -f {} \;
+        sed -i '/^CONFIG_AUTOREMOVE=/d; /^# CONFIG_AUTOREMOVE is not set$/d' .config
+        echo 'CONFIG_AUTOREMOVE=y' >> .config
+        # Fail immediately if an upstream update introduces a Kconfig cycle.
+        make defconfig RECURSIVE_DEP_IS_ERROR=1
+        grep -qx 'CONFIG_AUTOREMOVE=y' .config
+        grep -qx 'CONFIG_DOWNLOAD_CHECK_CERTIFICATE=y' .config
+        make -j4 prereq
+        df -hT / /workdir
+        make download -j4
 
     - name: Compile the firmware
       id: compile
       run: |
         cd openwrt
-        echo -e "4 thread compile"
-        make -j4 || make -j1 || make -j1 V=s
-        echo "status=success" >> $GITHUB_OUTPUT
+        (
+          while true; do
+            date -u
+            df -hT / /workdir
+            df -i / /workdir
+            sleep 180
+          done
+        ) > /workdir/disk-monitor.log 2>&1 &
+        monitor_pid=$!
+        trap 'kill "$monitor_pid" 2>/dev/null || true' EXIT
+        set -o pipefail
+        # Avoid repeated full builds and massive verbose runner logs on ENOSPC.
+        make -j4 2>&1 | tee /workdir/compile.log
+        echo "status=success" >> "$GITHUB_OUTPUT"
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
-        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> "$GITHUB_ENV"
+        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> "$GITHUB_ENV"
 
     - name: Check space usage
-      if: (!cancelled())
-      run: | 
-        df -hT
+      if: always()
+      run: |
+        df -hT /
+        df -i /
+        if [ -d /workdir ]; then
+          df -hT /workdir
+          df -i /workdir
+        fi
+        if [ -d /workdir/openwrt ]; then
+          du -xh --max-depth=1 /workdir/openwrt > /workdir/disk-usage.log || true
+          cat /workdir/disk-usage.log
+        fi
+
+    - name: Preserve failure diagnostics
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-failure-diagnostics
+        if-no-files-found: ignore
+        retention-days: 7
+        include-hidden-files: true
+        path: |
+          /workdir/compile.log
+          /workdir/disk-layout.log
+          /workdir/disk-monitor.log
+          /workdir/disk-usage.log
+          /workdir/openwrt/.config
+          /workdir/openwrt/logs
 
     - name: Clean up build artifacts
       if: steps.compile.outputs.status == 'success' && !cancelled()
@@ -134,7 +225,7 @@ jobs:
         df -hT
 
     - name: Upload bin directory
-      uses: actions/upload-artifact@main
+      uses: actions/upload-artifact@v4
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
       with:
         name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
@@ -143,7 +234,7 @@ jobs:
     # 整理编译好的固件
     - name: Organize files
       id: organize
-      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
         cd openwrt/bin/targets/*/*
         rm -rf packages
@@ -156,7 +247,7 @@ jobs:
         df -hT
 
     - name: Upload firmware directory
-      uses: actions/upload-artifact@main
+      uses: actions/upload-artifact@v4
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
         name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
@@ -178,7 +269,7 @@ jobs:
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload firmware to release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       if: steps.tag.outputs.status == 'success' && !cancelled()
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
