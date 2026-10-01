@@ -37,12 +37,26 @@ jobs:
     - name: Checkout
       uses: actions/checkout@main
 
+    - name: Maximize build space
+      # GitHub-hosted runners only have ~14GB on the root disk, which is not
+      # enough for a full ImmortalWrt build. Remount onto the larger /mnt disk.
+      # https://github.com/easimon/maximize-build-space
+      uses: easimon/maximize-build-space@master
+      with:
+        root-reserve-mb: 2048
+        swap-size-mb: 1024
+        remove-dotnet: 'true'
+        remove-android: 'true'
+        remove-haskell: 'true'
+        remove-codeql: 'true'
+        remove-docker-images: 'true'
+
     - name: Initialization environment
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-        sudo docker image prune --all --force
+        # Disk cleanup (dotnet/android/haskell/codeql/docker) is already handled
+        # by the "Maximize build space" step above.
         sudo -E apt-get -qq update
         sudo -E apt-get -qq install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
         bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib \
@@ -159,7 +173,7 @@ jobs:
         echo "账号：root" >> release.txt
         echo "密码：无" >> release.txt
         echo "默认主题：Argon" >> release.txt
-        echo "集成插件：openclash zerotier usb-printer usb-net ttyd iperf3 upnp" >> release.txt
+        echo "集成插件：homeproxy easytier zerotier usb-printer usb-net ttyd iperf3 upnp" >> release.txt
         echo "编译源码：https://github.com/padavanonly/immortalwrt-mt798x-6.6" >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
 
