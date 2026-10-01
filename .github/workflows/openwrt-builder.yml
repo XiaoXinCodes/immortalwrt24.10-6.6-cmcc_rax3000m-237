@@ -169,20 +169,35 @@ jobs:
     - name: Compile and verify the wireless driver
       run: |
         cd openwrt
+        (
+          while true; do
+            date -u
+            df -hT / /workdir
+            df -i / /workdir
+            sleep 180
+          done
+        ) >> /workdir/disk-monitor.log 2>&1 &
+        monitor_pid=$!
+        trap 'kill "$monitor_pid" 2>/dev/null || true' EXIT
         set -o pipefail
-        # Test the vendor header dependency with automatic cleanup enabled,
-        # before spending time compiling the remaining firmware packages.
-        if make -j4 package/mtk/drivers/mt_wifi/compile BUILD_LOG=1 2>&1 | tee /workdir/wireless-compile.log; then
-          test -s staging_dir/target-*/usr/include/mtk-warp/warp.h
-          module_path=$(find build_dir -path '*/mt_wifi/.pkgdir/*/mt_wifi.ko' -print -quit)
-          test -n "$module_path"
-          readelf -h "$module_path" | grep -q 'Machine:.*AArch64'
-          echo '::notice title=Wireless driver validated::mt_wifi compiled for AArch64 with CONFIG_AUTOREMOVE=y and staged warp headers'
-          echo 'mt_wifi compiled for AArch64 with automatic cleanup enabled and warp headers in target staging.' >> "$GITHUB_STEP_SUMMARY"
-        else
-          python3 "$GITHUB_WORKSPACE/scripts/report-build-errors.py" --build-dir "$PWD" --console-log /workdir/wireless-compile.log
-          exit 1
-        fi
+        # A package-only target assumes an already built toolchain and kernel.
+        # The upstream prepare target builds host tools, the cross toolchain,
+        # and target/kernel before the driver, using the same dependencies as world.
+        for build_target in prepare package/mtk/drivers/mt_wifi/compile; do
+          echo "Building $build_target"
+          if make -j4 "$build_target" BUILD_LOG=1 2>&1 | tee -a /workdir/wireless-compile.log; then
+            continue
+          else
+            python3 "$GITHUB_WORKSPACE/scripts/report-build-errors.py" --build-dir "$PWD" --console-log /workdir/wireless-compile.log
+            exit 1
+          fi
+        done
+        test -s staging_dir/target-*/usr/include/mtk-warp/warp.h
+        module_path=$(find build_dir -path '*/mt_wifi/.pkgdir/*/mt_wifi.ko' -print -quit)
+        test -n "$module_path"
+        readelf -h "$module_path" | grep -q 'Machine:.*AArch64'
+        echo '::notice title=Wireless driver validated::mt_wifi compiled for AArch64 with CONFIG_AUTOREMOVE=y and staged warp headers'
+        echo 'mt_wifi compiled for AArch64 with automatic cleanup enabled and warp headers in target staging.' >> "$GITHUB_STEP_SUMMARY"
 
     - name: Compile the firmware
       id: compile
@@ -195,7 +210,7 @@ jobs:
             df -i / /workdir
             sleep 180
           done
-        ) > /workdir/disk-monitor.log 2>&1 &
+        ) >> /workdir/disk-monitor.log 2>&1 &
         monitor_pid=$!
         trap 'kill "$monitor_pid" 2>/dev/null || true' EXIT
         set -o pipefail

@@ -77,7 +77,7 @@ make menuconfig   # 可视化调整
 
 默认启用 `CONFIG_AUTOREMOVE=y`，由 OpenWrt 在包构建完成后清理中间文件，降低编译期间占用；后续增量重编译会更慢。内核调试信息仍保留。编译期间每 3 分钟记录空间和 inode 使用量，失败时上传 `build-failure-diagnostics`，保留 7 天。开启按包保存日志；失败时将具体编译器错误写入 Actions 注解和摘要，避免只有 `failed to build` 的提示。
 
-上游 `mt_wifi` 从 `warp` 构建目录读取头文件；自动清理会提前删除这些文件，导致无线驱动编译缺失 `warp.h` / `warp_wifi.h`。`diy-part1.sh` 应用 `patches/mtk-warp-stage-headers.patch`，让 `warp` 通过 `Build/InstallDev` 导出头文件到 target staging，保留目录结构，再让 `mt_wifi` 从 staging 读取。自动清理和无线硬件卸载继续启用。工作流先编译无线驱动并检查 AArch64 内核模块，再编译剩余固件。
+上游 `mt_wifi` 从 `warp` 构建目录读取头文件；自动清理会提前删除这些文件，导致无线驱动编译缺失 `warp.h` / `warp_wifi.h`。`diy-part1.sh` 应用 `patches/mtk-warp-stage-headers.patch`，让 `warp` 通过 `Build/InstallDev` 导出头文件到 target staging，保留目录结构，再让 `mt_wifi` 从 staging 读取。自动清理和无线硬件卸载继续启用。工作流先执行上游 `make prepare` 构建 host tools、交叉工具链和目标内核，再编译无线驱动并检查 AArch64 内核模块，最后编译剩余固件。单包编译目标不能代替这些前置构建。
 
 可针对未修改的上游源码复现并验证头文件在清理后的可用性（此检查不代替驱动交叉编译）：
 
