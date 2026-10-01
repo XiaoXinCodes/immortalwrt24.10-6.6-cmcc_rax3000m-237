@@ -11,6 +11,11 @@
 #
 set -euo pipefail
 
+# warp must export its headers before automatic build-directory cleanup;
+# mt_wifi consumes them later through the target staging directory.
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+patch --batch --fuzz=0 -p1 < "$script_dir/patches/mtk-warp-stage-headers.patch"
+
 # Uncomment a feed source
 #sed -i 's/^#\(.*helloworld\)/\1/' feeds.conf.default
 

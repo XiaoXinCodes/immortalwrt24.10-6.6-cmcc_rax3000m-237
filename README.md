@@ -77,6 +77,14 @@ make menuconfig   # 可视化调整
 
 默认启用 `CONFIG_AUTOREMOVE=y`，由 OpenWrt 在包构建完成后清理中间文件，降低编译期间占用；后续增量重编译会更慢。内核调试信息仍保留。编译期间每 3 分钟记录空间和 inode 使用量，失败时上传 `build-failure-diagnostics`，保留 7 天。开启按包保存日志；失败时将具体编译器错误写入 Actions 注解和摘要，避免只有 `failed to build` 的提示。
 
+上游 `mt_wifi` 从 `warp` 构建目录读取头文件；自动清理会提前删除这些文件，导致无线驱动编译缺失 `warp.h` / `warp_wifi.h`。`diy-part1.sh` 应用 `patches/mtk-warp-stage-headers.patch`，让 `warp` 通过 `Build/InstallDev` 导出头文件到 target staging，保留目录结构，再让 `mt_wifi` 从 staging 读取。自动清理和无线硬件卸载继续启用。工作流先编译无线驱动并检查 AArch64 内核模块，再编译剩余固件。
+
+可针对未修改的上游源码复现并验证头文件在清理后的可用性（此检查不代替驱动交叉编译）：
+
+```bash
+python3 tests/check_warp_header_staging.py --source-dir /path/to/unmodified/openwrt
+```
+
 `diy-part2.sh` 每次查询 sing-box 官方最新稳定 release，获取 OpenWrt master 的打包配方，并根据官方 release 更新版本和源码 SHA-256；缓存及后续下载仍由 OpenWrt 校验哈希。读取发布源码的 Go 要求后，自动从 sbwml 的 Go 分支选择满足最低版本的配方，包含补丁版本比较。发现失败时直接报错，不回退旧版或关闭校验。
 
 当前构建系统的 tiny 虚拟包声明兼容处理仍保留。未选中的 PassWall 不安装进本次构建的包目录；若显式选中它，则保留并交由严格配置检查报告问题。解析后的 sing-box/Go 版本、源码哈希和配方提交记录在 `proxy-package-versions.json`，随固件或失败诊断上传。`Inspect build logs` 工作流可以按 run ID 读取构建日志，生成可直接查看的错误摘要。

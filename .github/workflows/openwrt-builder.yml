@@ -166,6 +166,24 @@ jobs:
         df -hT / /workdir
         make download -j4
 
+    - name: Compile and verify the wireless driver
+      run: |
+        cd openwrt
+        set -o pipefail
+        # Test the vendor header dependency with automatic cleanup enabled,
+        # before spending time compiling the remaining firmware packages.
+        if make -j4 package/mtk/drivers/mt_wifi/compile BUILD_LOG=1 2>&1 | tee /workdir/wireless-compile.log; then
+          test -s staging_dir/target-*/usr/include/mtk-warp/warp.h
+          module_path=$(find build_dir -path '*/mt_wifi/.pkgdir/*/mt_wifi.ko' -print -quit)
+          test -n "$module_path"
+          readelf -h "$module_path" | grep -q 'Machine:.*AArch64'
+          echo '::notice title=Wireless driver validated::mt_wifi compiled for AArch64 with CONFIG_AUTOREMOVE=y and staged warp headers'
+          echo 'mt_wifi compiled for AArch64 with automatic cleanup enabled and warp headers in target staging.' >> "$GITHUB_STEP_SUMMARY"
+        else
+          python3 "$GITHUB_WORKSPACE/scripts/report-build-errors.py" --build-dir "$PWD" --console-log /workdir/wireless-compile.log
+          exit 1
+        fi
+
     - name: Compile the firmware
       id: compile
       run: |
@@ -216,6 +234,7 @@ jobs:
         include-hidden-files: true
         path: |
           /workdir/compile.log
+          /workdir/wireless-compile.log
           /workdir/disk-layout.log
           /workdir/disk-monitor.log
           /workdir/disk-usage.log

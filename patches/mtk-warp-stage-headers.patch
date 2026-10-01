@@ -1,0 +1,38 @@
+--- a/package/mtk/drivers/warp/Makefile
++++ b/package/mtk/drivers/warp/Makefile
+@@ -87,4 +87,12 @@ define KernelPackage/warp/install
+ 	fi
+ endef
+ 
++# mt_wifi consumes these headers after warp's compile target has completed.
++# Stage them before CONFIG_AUTOREMOVE deletes warp's build directory.
++define Build/InstallDev
++	$(INSTALL_DIR) $(1)/usr/include/mtk-warp
++	cd $(PKG_BUILD_DIR) && $(FIND) . -type f -name '*.h' \
++		-exec $(CP) --parents {} $(1)/usr/include/mtk-warp/ \;
++endef
++
+ $(eval $(call KernelPackage,warp))
+--- a/package/mtk/drivers/mt_wifi/Makefile
++++ b/package/mtk/drivers/mt_wifi/Makefile
+@@ -314,6 +314,7 @@ define Build/Compile
+ 		$(KERNEL_MAKE_FLAGS) \
+ 		M="$(PKG_BUILD_DIR)/mt_wifi_ap" \
+ 		LINUX_DIR="$(KERNEL_BUILD_DIR)" \
++		WARP_INCLUDE_DIR="$(STAGING_DIR)/usr/include/mtk-warp" \
+ 		$(foreach c, $(PKG_KCONFIG),$(if $(CONFIG_MTK_$c),CONFIG_$(c)=$(CONFIG_MTK_$(c)))) \
+ 		modules
+ endef
+--- a/package/mtk/drivers/mt_wifi/patches/005-use-ext-warp-code.patch
++++ b/package/mtk/drivers/mt_wifi/patches/005-use-ext-warp-code.patch
+@@ -6,8 +6,8 @@
+  				-I$(WIFI_DRV_PATH)/mt_wifi/embedded/dbg_txcmd/include \
+ -				-I$(WIFI_DRV_PATH)/warp_driver/warp \
+ -				-I$(WIFI_DRV_PATH)/warp_driver/warp/mcu
+-+				-I$(WIFI_DRV_PATH)/../warp \
+-+				-I$(WIFI_DRV_PATH)/../warp/mcu
+++				-I$(WARP_INCLUDE_DIR) \
+++				-I$(WARP_INCLUDE_DIR)/mcu
+  
+  ifeq ($(CONFIG_SUPPORT_OPENWRT),y)
+  GLOBAL_DEFINES = include/uapi/linux/wapp
