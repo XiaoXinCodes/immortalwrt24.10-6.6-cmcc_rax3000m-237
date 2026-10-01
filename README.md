@@ -75,7 +75,7 @@ make menuconfig   # 可视化调整
 
 构建前检查实际挂载、可用容量和 inode，默认要求至少 50 GiB 可用空间（工作流变量 `MIN_BUILD_FREE_GIB`）。这是初始预算，并非已测得的最低需求；若 runner 容量不足，应根据完整构建峰值调整预算或使用更大磁盘的 runner。
 
-默认启用 `CONFIG_AUTOREMOVE=y`，由 OpenWrt 在包构建完成后清理中间文件，降低编译期间占用；后续增量重编译会更慢。内核调试信息仍保留。编译期间每 3 分钟记录空间和 inode 使用量，失败时上传 `build-failure-diagnostics`，保留 7 天。
+默认启用 `CONFIG_AUTOREMOVE=y`，由 OpenWrt 在包构建完成后清理中间文件，降低编译期间占用；后续增量重编译会更慢。内核调试信息仍保留。编译期间每 3 分钟记录空间和 inode 使用量，失败时上传 `build-failure-diagnostics`，保留 7 天。开启按包保存日志；失败时将具体编译器错误写入 Actions 注解和摘要，避免只有 `failed to build` 的提示。
 
 `diy-part2.sh` 每次查询 sing-box 官方最新稳定 release，获取 OpenWrt master 的打包配方，并根据官方 release 更新版本和源码 SHA-256；缓存及后续下载仍由 OpenWrt 校验哈希。读取发布源码的 Go 要求后，自动从 sbwml 的 Go 分支选择满足最低版本的配方，包含补丁版本比较。发现失败时直接报错，不回退旧版或关闭校验。
 

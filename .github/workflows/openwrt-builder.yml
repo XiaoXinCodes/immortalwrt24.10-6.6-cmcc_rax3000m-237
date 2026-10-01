@@ -182,8 +182,12 @@ jobs:
         trap 'kill "$monitor_pid" 2>/dev/null || true' EXIT
         set -o pipefail
         # Avoid repeated full builds and massive verbose runner logs on ENOSPC.
-        make -j4 BUILD_LOG=1 2>&1 | tee /workdir/compile.log
-        echo "status=success" >> "$GITHUB_OUTPUT"
+        if make -j4 BUILD_LOG=1 2>&1 | tee /workdir/compile.log; then
+          echo "status=success" >> "$GITHUB_OUTPUT"
+        else
+          python3 "$GITHUB_WORKSPACE/scripts/report-build-errors.py" --build-dir "$PWD" --console-log /workdir/compile.log
+          exit 1
+        fi
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> "$GITHUB_ENV"
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> "$GITHUB_ENV"
