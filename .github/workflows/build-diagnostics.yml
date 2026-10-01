@@ -1,0 +1,51 @@
+name: Inspect build logs
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Build workflow run ID to inspect
+        required: true
+        type: string
+
+permissions:
+  actions: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Read build logs and report errors
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+
+          run_id = os.environ['RUN_ID']
+          if not run_id.isdigit():
+              raise SystemExit('run_id must contain digits only')
+          prefix = 'repos/' + os.environ['REPOSITORY'] + '/actions/'
+          jobs = json.loads(subprocess.check_output(['gh', 'api', prefix + 'runs/' + run_id + '/jobs']))['jobs']
+          pattern = re.compile(r'ERROR:|fatal error:|fatal:|No space left on device|make(?:\[\d+\])?: \*\*\*|go: .*requires go|undefined reference|Killed signal', re.I)
+          for job in jobs:
+              result = subprocess.run(['gh', 'api', prefix + 'jobs/' + str(job['id']) + '/logs'], capture_output=True, text=True)
+              if result.returncode:
+                  print('::warning::Logs unavailable for job ' + str(job['id']) + '; retry once the job has uploaded logs.')
+                  continue
+              lines = result.stdout.splitlines()
+              matches = [i for i, line in enumerate(lines) if pattern.search(line)]
+              print('Job ' + str(job['id']) + ': ' + job['status'] + ', matched errors: ' + str(len(matches)))
+              for i in matches[-8:]:
+                  context = '\n'.join(lines[max(0, i-4):i+4])[-6000:]
+                  escaped = context.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                  print('::warning title=Build error context::' + escaped)
+              print('Latest output:\n' + '\n'.join(lines[-15:]))
+              summary = '\n'.join(lines[-15:])[-6000:]
+              print('::notice title=Latest build output::' + summary.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'))
+          PY
